@@ -120,3 +120,91 @@ export async function teamResolveAndClose(id, resolveData) {
   }
   return res.json();
 }
+
+// --- Auth & Session helpers ---
+export function getStoredToken() {
+  return localStorage.getItem('auth_token');
+}
+
+export function setStoredToken(token) {
+  if (token) {
+    localStorage.setItem('auth_token', token);
+  } else {
+    localStorage.removeItem('auth_token');
+  }
+}
+
+export function getStoredUser() {
+  try {
+    const userStr = localStorage.getItem('auth_user');
+    return userStr ? JSON.parse(userStr) : null;
+  } catch (e) {
+    return null;
+  }
+}
+
+export function setStoredUser(user) {
+  if (user) {
+    localStorage.setItem('auth_user', JSON.stringify(user));
+  } else {
+    localStorage.removeItem('auth_user');
+  }
+}
+
+export async function loginUser(username, password) {
+  const res = await fetch(`${API_BASE}/auth/login`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ username, password }),
+  });
+  if (!res.ok) {
+    const errData = await res.json().catch(() => ({}));
+    throw new Error(errData.detail || 'Invalid username or password');
+  }
+  const data = await res.json();
+  setStoredToken(data.token);
+  setStoredUser(data.user);
+  return data;
+}
+
+export async function fetchCurrentUser(token = getStoredToken()) {
+  if (!token) return null;
+  const res = await fetch(`${API_BASE}/auth/me`, {
+    headers: {
+      Authorization: `Bearer ${token}`,
+    },
+  });
+  if (!res.ok) {
+    setStoredToken(null);
+    setStoredUser(null);
+    return null;
+  }
+  const user = await res.json();
+  setStoredUser(user);
+  return user;
+}
+
+export async function logoutUser() {
+  try {
+    await fetch(`${API_BASE}/auth/logout`, { method: 'POST' });
+  } catch (e) {
+    // Ignore network error on logout
+  } finally {
+    setStoredToken(null);
+    setStoredUser(null);
+  }
+}
+
+export async function forwardTicketToTeam(id, to_email, body) {
+  const res = await fetch(`${API_BASE}/tickets/${id}/forward-team`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ to_email, body }),
+  });
+  if (!res.ok) {
+    throw new Error('Failed to forward email to team');
+  }
+  return res.json();
+}
+
+

@@ -17,9 +17,15 @@ from dotenv import load_dotenv
 load_dotenv(BACKEND_DIR / ".env")
 load_dotenv(ROOT_DIR / ".env")
 
+import base64
+import hashlib
+import hmac
+import json
+import time
 from apscheduler.schedulers.background import BackgroundScheduler
-from fastapi import Depends, FastAPI, HTTPException
+from fastapi import Depends, FastAPI, HTTPException, Security
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from pydantic import BaseModel
 from sqlalchemy.orm import Session
 
@@ -83,6 +89,116 @@ def on_startup():
 @app.on_event("shutdown")
 def on_shutdown():
     scheduler.shutdown()
+
+
+# --- Authentication & Session Management ---
+security = HTTPBearer(auto_error=False)
+AUTH_SECRET_KEY = os.getenv("AUTH_SECRET_KEY", "resident-tickets-jwt-secret-key-2025")
+
+DEFAULT_USERS = {
+    os.getenv("ADMIN_USERNAME", "admin"): {
+        "password": os.getenv("ADMIN_PASSWORD", "admin123"),
+        "name": "Sarah Jenkins",
+        "email": "sarah.jenkins@grandview-residences.com",
+        "role": "Property Director",
+        "avatar": "SJ",
+    },
+    "manager": {
+        "password": "manager123",
+        "name": "Alex Mercer",
+        "email": "alex.mercer@grandview-residences.com",
+        "role": "Property Manager",
+        "avatar": "AM",
+    },
+    "tech": {
+        "password": "tech123",
+        "name": "Dave Rodriguez",
+        "email": "dave.rodriguez@grandview-residences.com",
+        "role": "Maintenance Lead",
+        "avatar": "DR",
+    },
+}
+
+
+def generate_token(username: str, expires_in: int = 86400 * 7) -> str:
+    payload = {
+        "sub": username,
+        "exp": int(time.time()) + expires_in,
+    }
+    payload_b64 = base64.urlsafe_b64encode(json.dumps(payload).encode()).decode()
+    signature = hmac.new(AUTH_SECRET_KEY.encode(), payload_b64.encode(), hashlib.sha256).hexdigest()
+    return f"{payload_b64}.{signature}"
+
+
+def decode_token(token: str):
+    try:
+        parts = token.split(".")
+        if len(parts) != 2:
+            return None
+        payload_b64, signature = parts
+        expected_sig = hmac.new(AUTH_SECRET_KEY.encode(), payload_b64.encode(), hashlib.sha256).hexdigest()
+        if not hmac.compare_digest(signature, expected_sig):
+            return None
+        payload = json.loads(base64.urlsafe_b64decode(payload_b64.encode()).decode())
+        if payload.get("exp", 0) < time.time():
+            return None
+        return payload
+    except Exception:
+        return None
+
+
+def get_current_user(credentials: HTTPAuthorizationCredentials = Security(security)):
+    if not credentials or not credentials.credentials:
+        raise HTTPException(status_code=401, detail="Missing or invalid authentication credentials")
+    payload = decode_token(credentials.credentials)
+    if not payload:
+        raise HTTPException(status_code=401, detail="Session expired or invalid")
+    username = payload.get("sub")
+    user = DEFAULT_USERS.get(username)
+    if not user:
+        raise HTTPException(status_code=401, detail="User not found")
+    return {
+        "username": username,
+        "name": user["name"],
+        "email": user["email"],
+        "role": user["role"],
+        "avatar": user["avatar"],
+    }
+
+
+class LoginRequest(BaseModel):
+    username: str
+    password: str
+
+
+@app.post("/auth/login")
+def login(req: LoginRequest):
+    username = req.username.strip()
+    user = DEFAULT_USERS.get(username)
+    if not user or user["password"] != req.password:
+        raise HTTPException(status_code=401, detail="Invalid username or password")
+
+    token = generate_token(username)
+    return {
+        "token": token,
+        "user": {
+            "username": username,
+            "name": user["name"],
+            "email": user["email"],
+            "role": user["role"],
+            "avatar": user["avatar"],
+        },
+    }
+
+
+@app.get("/auth/me")
+def get_me(user: dict = Depends(get_current_user)):
+    return user
+
+
+@app.post("/auth/logout")
+def logout():
+    return {"message": "Logged out successfully"}
 
 
 class StatusUpdateRequest(BaseModel):
@@ -341,9 +457,44 @@ def seed_samples(db: Session = Depends(get_db)):
 
     added = []
     for item in sample_data:
-        ticket = Ticket(**item)
-        db.add(ticket)
-        added.append(item["subject"])
+        existing = (
+            db.query(Ticket)
+            .filter(Ticket.resident_email == item["resident_email"])
+            .order_by(Ticket.created_at.desc())
+            .first()
+        )
+        if existing:
+            timestamp_str = datetime.utcnow().strftime("%b %d, %Y • %I:%M %p")
+            existing.body = (existing.body or "") + f"\n\n--- [Resident Follow-up • {timestamp_str}] ---\nSubject: {item['subject']}\n{item['body']}"
+            existing.status = TicketStatus.NEW
+            existing.created_at = datetime.utcnow()
+            added.append(f"Appended to {item['resident_email']}")
+        else:
+            ticket = Ticket(**item)
+            db.add(ticket)
+            added.append(item["subject"])
 
     db.commit()
     return {"seeded": len(added), "tickets": added}
+
+
+class ForwardTeamRequest(BaseModel):
+    to_email: str
+    body: str
+
+
+@app.post("/tickets/{ticket_id}/forward-team")
+def forward_to_team(ticket_id: int, req: ForwardTeamRequest, db: Session = Depends(get_db)):
+    """Simulates email forwarding to assigned team (for display/demo, does not send real external email)."""
+    ticket = db.query(Ticket).filter(Ticket.id == ticket_id).first()
+    if not ticket:
+        raise HTTPException(404, "Ticket not found")
+
+    timestamp_str = datetime.utcnow().strftime("%b %d, %Y • %I:%M %p")
+    note = f"\n\n--- [Forwarded to Team ({req.to_email}) • {timestamp_str}] ---\n{req.body}"
+    ticket.body = (ticket.body or "") + note
+    if ticket.status == TicketStatus.NEW:
+        ticket.status = TicketStatus.IN_PROGRESS
+    db.commit()
+    db.refresh(ticket)
+    return {"success": True, "ticket": ticket, "message": f"Email forwarded to {req.to_email} (Simulated)"}

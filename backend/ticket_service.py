@@ -14,10 +14,31 @@ RESOLUTION_WINDOW = timedelta(hours=24)
 
 def process_incoming_mail(db: Session, subject: str, sender: str, body: str) -> Ticket:
     """
-    Steps 1-5 of the workflow:
-    Resident emails issue -> system reads it -> creates ticket ->
-    assigns home/category -> notifies the right team.
+    Resident emails issue -> system reads it.
+    If the resident's email already exists in the db, append the new message
+    to the existing ticket like a WhatsApp chat thread instead of creating a duplicate.
     """
+    existing_ticket = (
+        db.query(Ticket)
+        .filter(Ticket.resident_email == sender)
+        .order_by(Ticket.created_at.desc())
+        .first()
+    )
+
+    if existing_ticket:
+        # Append message to existing thread like WhatsApp chat
+        timestamp_str = datetime.utcnow().strftime("%b %d, %Y • %I:%M %p")
+        chat_entry = f"\n\n--- [Resident Follow-up • {timestamp_str}] ---\nSubject: {subject}\n{body}"
+        existing_ticket.body = (existing_ticket.body or "") + chat_entry
+        # Bring ticket back to top with updated time and mark status NEW
+        if existing_ticket.status in [TicketStatus.CLOSED, TicketStatus.CLOSED_NO_CONFIRMATION, TicketStatus.CONFIRMED_FIXED]:
+            existing_ticket.status = TicketStatus.NEW
+        existing_ticket.created_at = datetime.utcnow()
+        db.commit()
+        db.refresh(existing_ticket)
+        logger.info("Appended message to existing ticket #%s from %s", existing_ticket.id, sender)
+        return existing_ticket
+
     ticket = Ticket(
         resident_email=sender,
         subject=subject,
@@ -32,14 +53,6 @@ def process_incoming_mail(db: Session, subject: str, sender: str, body: str) -> 
     ticket.home = classification["home"]
     ticket.category = classification["category"]
     ticket.assigned_team = classification["assigned_team"]
-    db.commit()
-
-    # try:
-    #     notify_team(ticket)
-    #     ticket.status = TicketStatus.NOTIFIED
-    #     ticket.notified_at = datetime.utcnow()
-    # except Exception:
-    #     logger.exception("Failed to notify team for ticket %s", ticket.id)
     db.commit()
     db.refresh(ticket)
 

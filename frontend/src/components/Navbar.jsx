@@ -1,5 +1,5 @@
 import React from 'react';
-import { Mail, RefreshCw, Sparkles, Server, CheckCircle2, AlertCircle } from 'lucide-react';
+import { Mail, RefreshCw, Sparkles, LogOut, UserCheck } from 'lucide-react';
 
 export default function Navbar({
   isOnline,
@@ -11,6 +11,8 @@ export default function Navbar({
   autoRefresh,
   setAutoRefresh,
   lastUpdated,
+  currentUser,
+  onLogout,
 }) {
   return (
     <header className="navbar">
@@ -38,9 +40,9 @@ export default function Navbar({
 
         {/* Auto Refresh Toggle */}
         <button
-          className={`btn btn-sm ${autoRefresh ? 'btn-secondary' : 'btn-secondary'}`}
+          className="btn btn-sm btn-secondary"
           onClick={() => setAutoRefresh(!autoRefresh)}
-          title="Toggle 10-second automatic polling"
+          title="Toggle 8-second automatic polling"
           style={{ opacity: autoRefresh ? 1 : 0.6 }}
         >
           <RefreshCw size={14} className={autoRefresh ? 'spin' : ''} />
@@ -68,6 +70,29 @@ export default function Navbar({
           <RefreshCw size={14} className={isPolling ? 'spin' : ''} />
           {isPolling ? 'Polling Gmail...' : 'Poll Mailbox Now'}
         </button>
+
+        {/* Current Authenticated User & Logout */}
+        {currentUser && (
+          <div className="nav-user-profile">
+            <div className="nav-user-badge" title={`${currentUser.name} (${currentUser.email || ''})`}>
+              <div className="nav-user-avatar">
+                {currentUser.avatar || <UserCheck size={14} />}
+              </div>
+              <div className="nav-user-meta">
+                <span className="nav-user-name">{currentUser.name}</span>
+                <span className="nav-user-role">{currentUser.role}</span>
+              </div>
+            </div>
+            <button
+              className="btn btn-secondary btn-sm nav-logout-btn"
+              onClick={onLogout}
+              title="Sign out of Dispatch Hub"
+            >
+              <LogOut size={14} />
+              <span>Sign Out</span>
+            </button>
+          </div>
+        )}
       </div>
     </header>
   );
