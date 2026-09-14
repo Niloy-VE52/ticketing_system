@@ -35,13 +35,7 @@ SMTP_SERVER=smtp.gmail.com
 SMTP_PORT=587
 IMAP_SERVER=imap.gmail.com
 
-# Department Routing Emails
-PLUMBING_TEAM_EMAIL=plumbing-team@example.com
-ELECTRICAL_TEAM_EMAIL=electrical-team@example.com
-HVAC_TEAM_EMAIL=hvac-team@example.com
-SECURITY_TEAM_EMAIL=security-team@example.com
-APPLIANCE_TEAM_EMAIL=appliance-team@example.com
-GENERAL_TEAM_EMAIL=facilities-team@example.com
+
 
 # Authentication & Admin Credentials
 ADMIN_USERNAME=admin
